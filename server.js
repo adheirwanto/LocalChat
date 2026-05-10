@@ -72,7 +72,18 @@ const voiceStorage = multer.diskStorage({
   }
 });
 
-const voiceUpload = multer({ storage: voiceStorage, limits: { fileSize: 25 * 1024 * 1024 } }); // 25MB max
+const voiceUpload = multer({
+  storage: voiceStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'), false);
+    }
+  }
+}); // 25MB max
 
 app.post('/upload/voice', (req, res, next) => {
   const socketId = req.headers['x-socket-id'];
@@ -80,7 +91,14 @@ app.post('/upload/voice', (req, res, next) => {
     return res.status(401).json({ error: 'Unauthorized: must be a registered user' });
   }
   next();
-}, voiceUpload.single('voice'), (req, res) => {
+}, (req, res, next) => {
+  voiceUpload.single('voice')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+}, (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No audio file uploaded' });
   }
@@ -157,8 +175,9 @@ io.on('connection', (socket) => {
       sessionToken = created.sessionToken;
     } else {
       // Use existing user record but use the stored username casing
+      // Generate a new session token to invalidate any previously stored token
       username = user.username;
-      sessionToken = user.session_token;
+      sessionToken = db.updateSessionToken(username);
     }
 
     // Register socket
@@ -280,6 +299,10 @@ io.on('connection', (socket) => {
     if (!socket.username) return;
     if (typeof roomId !== 'string') return;
 
+    // Verify user is a member of the room before returning messages
+    const members = db.getRoomMembers(roomId);
+    if (!members.includes(socket.username)) return;
+
     const messages = db.getRoomMessages(roomId, 100);
     socket.emit('room-messages', { roomId, messages });
   });
@@ -319,6 +342,9 @@ io.on('connection', (socket) => {
     if (typeof data.originalName !== 'string' || data.originalName.length > 500) return;
     if (typeof data.size !== 'number') return;
 
+    // Validate that the filename actually exists in the uploads directory
+    if (!fs.existsSync(path.join(UPLOADS_DIR, data.filename))) return;
+
     const roomId = data.roomId || 'general';
     const timestamp = new Date().toISOString();
 
@@ -349,6 +375,9 @@ io.on('connection', (socket) => {
   socket.on('voice-note', (data) => {
     if (!socket.username) return;
     if (typeof data.filename !== 'string' || data.filename.length > 500) return;
+
+    // Validate that the filename actually exists in the uploads directory
+    if (!fs.existsSync(path.join(UPLOADS_DIR, data.filename))) return;
 
     const roomId = data.roomId || 'general';
     const duration = typeof data.duration === 'number' ? data.duration : 0;

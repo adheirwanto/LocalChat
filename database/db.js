@@ -71,6 +71,12 @@ function getUserByUsernameCaseInsensitive(username) {
   return db.prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?)').get(username);
 }
 
+function updateSessionToken(username) {
+  const newToken = uuidv4();
+  db.prepare('UPDATE users SET session_token = ? WHERE username = ?').run(newToken, username);
+  return newToken;
+}
+
 // --- Room functions ---
 
 function createRoom(name, creatorUsername) {
@@ -133,6 +139,7 @@ module.exports = {
   getUserByToken,
   getUserByUsername,
   getUserByUsernameCaseInsensitive,
+  updateSessionToken,
   createRoom,
   getRooms,
   getRoom,
