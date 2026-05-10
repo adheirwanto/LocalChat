@@ -25,14 +25,29 @@
 
     currentUsername = username;
     socket.emit('set-username', username);
-
-    usernameScreen.classList.add('hidden');
-    chatScreen.classList.remove('hidden');
-    messageInput.focus();
-
-    // Load existing files
-    loadFiles();
   }
+
+  // Server confirmed username is taken
+  socket.on('username-taken', (data) => {
+    currentUsername = '';
+    const errorMsg = data.error || 'Username is already taken';
+    alert(errorMsg);
+    usernameInput.focus();
+  });
+
+  // Server confirmed user joined (including ourselves)
+  socket.on('user-joined', (data) => {
+    appendSystemMessage(data.username + ' joined the chat');
+    updateOnlineUsers(data.onlineUsers);
+
+    // If our username is in the joined event, transition to chat screen
+    if (data.username === currentUsername && chatScreen.classList.contains('hidden')) {
+      usernameScreen.classList.add('hidden');
+      chatScreen.classList.remove('hidden');
+      messageInput.focus();
+      loadFiles();
+    }
+  });
 
   usernameBtn.addEventListener('click', submitUsername);
   usernameInput.addEventListener('keypress', (e) => {
@@ -55,14 +70,8 @@
 
   // Receive chat message
   socket.on('chat-message', (data) => {
-    const isOwn = data.username === currentUsername;
+    const isOwn = data.socketId === socket.id;
     appendMessage(data, isOwn);
-  });
-
-  // User joined
-  socket.on('user-joined', (data) => {
-    appendSystemMessage(data.username + ' joined the chat');
-    updateOnlineUsers(data.onlineUsers);
   });
 
   // User left
@@ -146,6 +155,9 @@
     try {
       const response = await fetch('/upload', {
         method: 'POST',
+        headers: {
+          'X-Socket-ID': socket.id
+        },
         body: formData
       });
 

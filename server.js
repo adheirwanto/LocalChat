@@ -37,8 +37,14 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 5
 // Serve static files from public/
 app.use(express.static(path.join(__dirname, 'public')));
 
-// File upload endpoint
-app.post('/upload', upload.single('file'), (req, res) => {
+// File upload endpoint (requires authenticated socket)
+app.post('/upload', (req, res, next) => {
+  const socketId = req.headers['x-socket-id'];
+  if (!socketId || !registeredSockets.has(socketId)) {
+    return res.status(401).json({ error: 'Unauthorized: must be a registered user' });
+  }
+  next();
+}, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -53,17 +59,17 @@ app.post('/upload', upload.single('file'), (req, res) => {
 // File download endpoint
 app.get('/uploads/:filename', (req, res) => {
   const filename = req.params.filename;
-  const filepath = path.join(UPLOADS_DIR, filename);
 
-  // Prevent path traversal
-  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+  // Prevent path traversal using resolve-then-startsWith
+  const resolved = path.resolve(UPLOADS_DIR, filename);
+  if (!resolved.startsWith(UPLOADS_DIR)) {
     return res.status(400).json({ error: 'Invalid filename' });
   }
 
-  if (!fs.existsSync(filepath)) {
+  if (!fs.existsSync(resolved)) {
     return res.status(404).json({ error: 'File not found' });
   }
-  res.download(filepath);
+  res.download(resolved);
 });
 
 // List uploaded files
@@ -89,13 +95,28 @@ app.get('/api/files', (req, res) => {
 
 // Track connected users
 const onlineUsers = new Map(); // socketId -> username
+const activeUsernames = new Set(); // set of taken usernames (lowercase for case-insensitive check)
+const registeredSockets = new Set(); // socket IDs that have registered a username
 
 // Socket.IO events
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   socket.on('set-username', (username) => {
+    if (typeof username !== 'string') return;
+    username = username.trim();
+    if (!username || username.length > 20) return;
+
+    // Check for duplicate username (case-insensitive)
+    const lowerUsername = username.toLowerCase();
+    if (activeUsernames.has(lowerUsername)) {
+      socket.emit('username-taken', { error: 'Username is already taken' });
+      return;
+    }
+
+    activeUsernames.add(lowerUsername);
     onlineUsers.set(socket.id, username);
+    registeredSockets.add(socket.id);
     socket.username = username;
 
     // Notify all users
@@ -109,11 +130,13 @@ io.on('connection', (socket) => {
 
   socket.on('chat-message', (data) => {
     if (!socket.username) return;
+    if (typeof data.text !== 'string' || data.text.length === 0 || data.text.length > 5000) return;
 
     const message = {
       username: socket.username,
       text: data.text,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      socketId: socket.id
     };
 
     io.emit('chat-message', message);
@@ -121,13 +144,17 @@ io.on('connection', (socket) => {
 
   socket.on('file-shared', (data) => {
     if (!socket.username) return;
+    if (typeof data.filename !== 'string' || data.filename.length > 500) return;
+    if (typeof data.originalName !== 'string' || data.originalName.length > 500) return;
+    if (typeof data.size !== 'number') return;
 
     const fileNotification = {
       username: socket.username,
       filename: data.filename,
       originalName: data.originalName,
       size: data.size,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      socketId: socket.id
     };
 
     io.emit('file-shared', fileNotification);
@@ -136,8 +163,10 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const username = onlineUsers.get(socket.id);
     onlineUsers.delete(socket.id);
+    registeredSockets.delete(socket.id);
 
     if (username) {
+      activeUsernames.delete(username.toLowerCase());
       io.emit('user-left', {
         username,
         onlineUsers: Array.from(onlineUsers.values())
