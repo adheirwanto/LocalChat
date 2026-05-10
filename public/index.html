@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
   <title>LocalChat - LAN Chat & File Sharing</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -27,8 +27,17 @@
     </header>
 
     <div class="chat-container">
-      <!-- Sidebar - Online Users -->
+      <!-- Sidebar -->
       <aside id="sidebar" class="sidebar">
+        <div class="rooms-section">
+          <h3>Rooms</h3>
+          <ul id="room-list"></ul>
+          <div class="create-room-form">
+            <input type="text" id="create-room-input" placeholder="New room name..." maxlength="50" autocomplete="off">
+            <button id="create-room-btn">+</button>
+          </div>
+        </div>
+
         <h3>Online Users</h3>
         <ul id="online-users"></ul>
 
@@ -40,14 +49,33 @@
           <input type="file" id="file-input" class="file-input-hidden">
           <div id="upload-status" class="upload-status"></div>
         </div>
+
+        <div class="logout-section">
+          <button id="logout-btn" class="logout-btn">Logout</button>
+        </div>
       </aside>
 
       <!-- Message Area -->
       <main class="chat-main">
+        <div class="room-header">
+          <span id="current-room-name">General</span>
+        </div>
         <div id="messages" class="messages"></div>
 
+        <div class="recording-indicator hidden" id="recording-indicator">
+          <span class="recording-dot"></span>
+          <span class="recording-text">Recording...</span>
+        </div>
+        <div class="inline-upload-status hidden" id="inline-upload-status">Uploading...</div>
         <div class="message-input-area">
+          <button id="attach-btn" class="icon-btn" title="Attach file">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <input type="file" id="attach-file-input" class="file-input-hidden">
           <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+          <button id="mic-btn" class="icon-btn" title="Record voice note">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
           <button id="send-btn">Send</button>
         </div>
       </main>

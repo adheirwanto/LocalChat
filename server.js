@@ -1,17 +1,19 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { execSync } = require('child_process');
+const db = require('./database/db');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
 
 const PORT = 3000;
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const CERTS_DIR = path.join(__dirname, 'certs');
 
 // Ensure uploads directory exists
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -24,7 +26,6 @@ const storage = multer.diskStorage({
     cb(null, UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
-    // Preserve original filename but add timestamp to avoid conflicts
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
     const base = path.basename(file.originalname, ext);
@@ -36,6 +37,10 @@ const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 5
 
 // Serve static files from public/
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Runtime state: socket-to-user mapping (online presence)
+const onlineUsers = new Map(); // socketId -> username
+const registeredSockets = new Set(); // socket IDs that have registered a username
 
 // File upload endpoint (requires authenticated socket)
 app.post('/upload', (req, res, next) => {
@@ -56,11 +61,59 @@ app.post('/upload', (req, res, next) => {
   res.json(fileInfo);
 });
 
+// Voice note upload endpoint (requires authenticated socket)
+const voiceStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname) || '.webm';
+    cb(null, 'voice-' + uniqueSuffix + ext);
+  }
+});
+
+const voiceUpload = multer({
+  storage: voiceStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'), false);
+    }
+  }
+}); // 25MB max
+
+app.post('/upload/voice', (req, res, next) => {
+  const socketId = req.headers['x-socket-id'];
+  if (!socketId || !registeredSockets.has(socketId)) {
+    return res.status(401).json({ error: 'Unauthorized: must be a registered user' });
+  }
+  next();
+}, (req, res, next) => {
+  voiceUpload.single('voice')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No audio file uploaded' });
+  }
+  const fileInfo = {
+    filename: req.file.filename,
+    size: req.file.size
+  };
+  res.json(fileInfo);
+});
+
 // File download endpoint
 app.get('/uploads/:filename', (req, res) => {
   const filename = req.params.filename;
 
-  // Prevent path traversal using resolve-then-startsWith
   const resolved = path.resolve(UPLOADS_DIR, filename);
   if (!resolved.startsWith(UPLOADS_DIR)) {
     return res.status(400).json({ error: 'Invalid filename' });
@@ -78,7 +131,6 @@ app.get('/api/files', (req, res) => {
     if (err) {
       return res.status(500).json({ error: 'Unable to read files' });
     }
-    // Filter out .gitkeep
     const fileList = files
       .filter(f => f !== '.gitkeep')
       .map(f => {
@@ -93,88 +145,285 @@ app.get('/api/files', (req, res) => {
   });
 });
 
-// Track connected users
-const onlineUsers = new Map(); // socketId -> username
-const activeUsernames = new Set(); // set of taken usernames (lowercase for case-insensitive check)
-const registeredSockets = new Set(); // socket IDs that have registered a username
+// Helper: get list of online usernames
+function getOnlineUsernames() {
+  return Array.from(onlineUsers.values());
+}
 
-// Socket.IO events
-io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+// Socket.IO event handler setup (shared between HTTP and HTTPS)
+function setupSocketHandlers(ioInstance) {
+  ioInstance.on('connection', (socket) => {
+    console.log(`Client connected: ${socket.id}`);
 
-  socket.on('set-username', (username) => {
-    if (typeof username !== 'string') return;
-    username = username.trim();
-    if (!username || username.length > 20) return;
+    socket.on('set-username', (username) => {
+      if (typeof username !== 'string') return;
+      username = username.trim();
+      if (!username || username.length > 20) return;
 
-    // Check for duplicate username (case-insensitive)
-    const lowerUsername = username.toLowerCase();
-    if (activeUsernames.has(lowerUsername)) {
-      socket.emit('username-taken', { error: 'Username is already taken' });
-      return;
-    }
+      // Check if username is already online (case-insensitive)
+      const lowerUsername = username.toLowerCase();
+      const onlineList = getOnlineUsernames();
+      const isTaken = onlineList.some(u => u.toLowerCase() === lowerUsername);
+      if (isTaken) {
+        socket.emit('username-taken', { error: 'Username is already taken' });
+        return;
+      }
 
-    activeUsernames.add(lowerUsername);
-    onlineUsers.set(socket.id, username);
-    registeredSockets.add(socket.id);
-    socket.username = username;
+      // Create or retrieve user from DB
+      let user = db.getUserByUsernameCaseInsensitive(username);
+      let sessionToken;
+      if (!user) {
+        const created = db.createUser(username);
+        sessionToken = created.sessionToken;
+      } else {
+        // Use existing user record but use the stored username casing
+        // Generate a new session token to invalidate any previously stored token
+        username = user.username;
+        sessionToken = db.updateSessionToken(username);
+      }
 
-    // Notify all users
-    io.emit('user-joined', {
-      username,
-      onlineUsers: Array.from(onlineUsers.values())
+      // Register socket
+      onlineUsers.set(socket.id, username);
+      registeredSockets.add(socket.id);
+      socket.username = username;
+
+      // Auto-join General room
+      db.addRoomMember('general', username);
+      socket.join('general');
+
+      // Join all user rooms in socket.io
+      const userRooms = db.getUserRooms(username);
+      userRooms.forEach(room => {
+        socket.join(room.id);
+      });
+
+      // Notify all users
+      ioInstance.emit('user-joined', {
+        username,
+        onlineUsers: getOnlineUsernames()
+      });
+
+      // Send session token to client
+      socket.emit('login-success', { username, sessionToken });
+
+      console.log(`User joined: ${username}`);
     });
 
-    console.log(`User joined: ${username}`);
-  });
+    socket.on('reconnect-session', (token) => {
+      if (typeof token !== 'string' || !token) return;
 
-  socket.on('chat-message', (data) => {
-    if (!socket.username) return;
-    if (typeof data.text !== 'string' || data.text.length === 0 || data.text.length > 5000) return;
+      const user = db.getUserByToken(token);
+      if (!user) {
+        socket.emit('reconnect-failed');
+        return;
+      }
 
-    const message = {
-      username: socket.username,
-      text: data.text,
-      timestamp: new Date().toISOString(),
-      socketId: socket.id
-    };
+      const username = user.username;
 
-    io.emit('chat-message', message);
-  });
+      // Check if already online
+      const onlineList = getOnlineUsernames();
+      if (onlineList.some(u => u.toLowerCase() === username.toLowerCase())) {
+        socket.emit('reconnect-failed');
+        return;
+      }
 
-  socket.on('file-shared', (data) => {
-    if (!socket.username) return;
-    if (typeof data.filename !== 'string' || data.filename.length > 500) return;
-    if (typeof data.originalName !== 'string' || data.originalName.length > 500) return;
-    if (typeof data.size !== 'number') return;
+      // Register socket
+      onlineUsers.set(socket.id, username);
+      registeredSockets.add(socket.id);
+      socket.username = username;
 
-    const fileNotification = {
-      username: socket.username,
-      filename: data.filename,
-      originalName: data.originalName,
-      size: data.size,
-      timestamp: new Date().toISOString(),
-      socketId: socket.id
-    };
+      // Auto-join General room
+      db.addRoomMember('general', username);
+      socket.join('general');
 
-    io.emit('file-shared', fileNotification);
-  });
-
-  socket.on('disconnect', () => {
-    const username = onlineUsers.get(socket.id);
-    onlineUsers.delete(socket.id);
-    registeredSockets.delete(socket.id);
-
-    if (username) {
-      activeUsernames.delete(username.toLowerCase());
-      io.emit('user-left', {
-        username,
-        onlineUsers: Array.from(onlineUsers.values())
+      // Join all user rooms in socket.io
+      const userRooms = db.getUserRooms(username);
+      userRooms.forEach(room => {
+        socket.join(room.id);
       });
-      console.log(`User left: ${username}`);
-    }
+
+      // Notify all users
+      ioInstance.emit('user-joined', {
+        username,
+        onlineUsers: getOnlineUsernames()
+      });
+
+      // Confirm reconnect to client
+      socket.emit('reconnect-success', { username, sessionToken: user.session_token });
+
+      console.log(`User reconnected: ${username}`);
+    });
+
+    socket.on('get-rooms', () => {
+      if (!socket.username) return;
+      const rooms = db.getRooms();
+      socket.emit('room-list', rooms);
+    });
+
+    socket.on('create-room', (data) => {
+      if (!socket.username) return;
+      const name = typeof data === 'string' ? data.trim() : (data && data.name ? data.name.trim() : '');
+      if (!name || name.length > 50) return;
+
+      const room = db.createRoom(name, socket.username);
+      socket.join(room.id);
+
+      // Broadcast new room to all connected users
+      ioInstance.emit('room-created', room);
+    });
+
+    socket.on('join-room', (roomId) => {
+      if (!socket.username) return;
+      if (typeof roomId !== 'string') return;
+
+      const room = db.getRoom(roomId);
+      if (!room) return;
+
+      db.addRoomMember(roomId, socket.username);
+      socket.join(roomId);
+
+      socket.emit('join-room-success', { roomId, room });
+    });
+
+    socket.on('leave-room', (roomId) => {
+      if (!socket.username) return;
+      if (typeof roomId !== 'string') return;
+      // Cannot leave General room
+      if (roomId === 'general') return;
+
+      db.removeRoomMember(roomId, socket.username);
+      socket.leave(roomId);
+
+      socket.emit('leave-room-success', { roomId });
+    });
+
+    socket.on('get-room-messages', (roomId) => {
+      if (!socket.username) return;
+      if (typeof roomId !== 'string') return;
+
+      // Verify user is a member of the room before returning messages
+      const members = db.getRoomMembers(roomId);
+      if (!members.includes(socket.username)) return;
+
+      const messages = db.getRoomMessages(roomId, 100);
+      socket.emit('room-messages', { roomId, messages });
+    });
+
+    socket.on('chat-message', (data) => {
+      if (!socket.username) return;
+      if (typeof data.text !== 'string' || data.text.length === 0 || data.text.length > 5000) return;
+
+      const roomId = data.roomId || 'general';
+      const timestamp = new Date().toISOString();
+
+      // Persist message
+      const msgId = db.saveMessage({
+        roomId,
+        username: socket.username,
+        text: data.text,
+        type: 'text',
+        timestamp
+      });
+
+      const message = {
+        id: msgId,
+        username: socket.username,
+        text: data.text,
+        timestamp,
+        socketId: socket.id,
+        roomId
+      };
+
+      // Broadcast to room only
+      ioInstance.to(roomId).emit('chat-message', message);
+    });
+
+    socket.on('file-shared', (data) => {
+      if (!socket.username) return;
+      if (typeof data.filename !== 'string' || data.filename.length > 500) return;
+      if (typeof data.originalName !== 'string' || data.originalName.length > 500) return;
+      if (typeof data.size !== 'number') return;
+
+      // Validate that the filename actually exists in the uploads directory
+      if (!fs.existsSync(path.join(UPLOADS_DIR, data.filename))) return;
+
+      const roomId = data.roomId || 'general';
+      const timestamp = new Date().toISOString();
+
+      // Persist file message
+      db.saveMessage({
+        roomId,
+        username: socket.username,
+        text: data.originalName,
+        type: 'file',
+        fileUrl: '/uploads/' + data.filename,
+        timestamp
+      });
+
+      const fileNotification = {
+        username: socket.username,
+        filename: data.filename,
+        originalName: data.originalName,
+        size: data.size,
+        timestamp,
+        socketId: socket.id,
+        roomId
+      };
+
+      // Broadcast to room only
+      ioInstance.to(roomId).emit('file-shared', fileNotification);
+    });
+
+    socket.on('voice-note', (data) => {
+      if (!socket.username) return;
+      if (typeof data.filename !== 'string' || data.filename.length > 500) return;
+
+      // Validate that the filename actually exists in the uploads directory
+      if (!fs.existsSync(path.join(UPLOADS_DIR, data.filename))) return;
+
+      const roomId = data.roomId || 'general';
+      const duration = typeof data.duration === 'number' ? data.duration : 0;
+      const timestamp = new Date().toISOString();
+
+      // Persist voice message
+      db.saveMessage({
+        roomId,
+        username: socket.username,
+        text: '',
+        type: 'voice',
+        fileUrl: '/uploads/' + data.filename,
+        timestamp
+      });
+
+      const voiceData = {
+        username: socket.username,
+        filename: data.filename,
+        fileUrl: '/uploads/' + data.filename,
+        duration,
+        timestamp,
+        socketId: socket.id,
+        roomId
+      };
+
+      // Broadcast to room only
+      ioInstance.to(roomId).emit('voice-note', voiceData);
+    });
+
+    socket.on('disconnect', () => {
+      const username = onlineUsers.get(socket.id);
+      onlineUsers.delete(socket.id);
+      registeredSockets.delete(socket.id);
+
+      if (username) {
+        ioInstance.emit('user-left', {
+          username,
+          onlineUsers: getOnlineUsernames()
+        });
+        console.log(`User left: ${username}`);
+      }
+    });
   });
-});
+}
 
 // Get local network IPs
 function getLocalIPs() {
@@ -191,20 +440,77 @@ function getLocalIPs() {
   return addresses;
 }
 
-// Start server
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n=== LocalChat Server Running ===`);
-  console.log(`Local:   http://localhost:${PORT}`);
+// Generate self-signed certificates for HTTPS
+function ensureCerts() {
+  if (!fs.existsSync(CERTS_DIR)) {
+    fs.mkdirSync(CERTS_DIR, { recursive: true });
+  }
+  const keyPath = path.join(CERTS_DIR, 'key.pem');
+  const certPath = path.join(CERTS_DIR, 'cert.pem');
+
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    console.log('Generating self-signed certificate for HTTPS...');
+
+    // Include all local IPs in SAN so browsers accept the cert
+    const ips = getLocalIPs();
+    const altNames = ['DNS.1 = localhost', 'IP.1 = 127.0.0.1'];
+    ips.forEach(({ address }, i) => {
+      altNames.push('IP.' + (i + 2) + ' = ' + address);
+    });
+
+    const confPath = path.join(CERTS_DIR, 'openssl.cnf');
+    const conf = [
+      '[req]',
+      'distinguished_name = req_distinguished_name',
+      'x509_extensions = v3_req',
+      'prompt = no',
+      '[req_distinguished_name]',
+      'CN = LocalChat',
+      '[v3_req]',
+      'subjectAltName = @alt_names',
+      '[alt_names]',
+      ...altNames
+    ].join('\n');
+    fs.writeFileSync(confPath, conf);
+
+    execSync('openssl req -x509 -newkey rsa:2048 -keyout "' + keyPath + '" -out "' + certPath + '" -days 365 -nodes -config "' + confPath + '"');
+    console.log('Certificate generated successfully.\n');
+  }
+  return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+}
+
+// Try HTTPS first, fall back to HTTP
+let mainServer;
+let protocol = 'http';
+
+try {
+  const certs = ensureCerts();
+  mainServer = https.createServer(certs, app);
+  protocol = 'https';
+} catch (err) {
+  console.log('HTTPS not available (' + err.message + '). Falling back to HTTP.');
+  console.log('Voice notes may not work on mobile without HTTPS.\n');
+  mainServer = http.createServer(app);
+  protocol = 'http';
+}
+
+const io = new Server(mainServer);
+setupSocketHandlers(io);
+
+mainServer.listen(PORT, '0.0.0.0', () => {
+  console.log('\n=== LocalChat Server Running ===');
+  console.log('Local:   ' + protocol + '://localhost:' + PORT);
 
   const ips = getLocalIPs();
   if (ips.length > 0) {
-    console.log(`\nNetwork addresses (share with others on your LAN):`);
+    console.log('\nShare this address with others on your network:');
     ips.forEach(({ name, address }) => {
-      console.log(`  ${name}: http://${address}:${PORT}`);
+      console.log('  ' + name + ': ' + protocol + '://' + address + ':' + PORT);
     });
-  } else {
-    console.log(`\nNo network interfaces found. Use http://localhost:${PORT}`);
   }
 
-  console.log(`\nPress Ctrl+C to stop the server.\n`);
+  if (protocol === 'https') {
+    console.log('\nNote: On first visit, accept the security warning (self-signed certificate).');
+  }
+  console.log('\nPress Ctrl+C to stop.\n');
 });
