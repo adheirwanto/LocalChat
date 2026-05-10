@@ -1,6 +1,7 @@
 (function () {
   const socket = io();
   let currentUsername = '';
+  let currentRoomId = 'general';
 
   // DOM elements
   const usernameScreen = document.getElementById('username-screen');
@@ -17,36 +18,61 @@
   const uploadStatus = document.getElementById('upload-status');
   const toggleSidebarBtn = document.getElementById('toggle-sidebar');
   const sidebar = document.getElementById('sidebar');
+  const roomListEl = document.getElementById('room-list');
+  const createRoomInput = document.getElementById('create-room-input');
+  const createRoomBtn = document.getElementById('create-room-btn');
+  const currentRoomNameEl = document.getElementById('current-room-name');
+  const logoutBtn = document.getElementById('logout-btn');
 
-  // Username submission
+  // Check for existing session on load
+  const savedToken = localStorage.getItem('localchat_token');
+  if (savedToken) {
+    socket.emit('reconnect-session', savedToken);
+  }
+
+  // --- Session events ---
+
+  socket.on('login-success', (data) => {
+    currentUsername = data.username;
+    localStorage.setItem('localchat_token', data.sessionToken);
+    enterChat();
+  });
+
+  socket.on('reconnect-success', (data) => {
+    currentUsername = data.username;
+    localStorage.setItem('localchat_token', data.sessionToken);
+    enterChat();
+  });
+
+  socket.on('reconnect-failed', () => {
+    localStorage.removeItem('localchat_token');
+    // Show username screen
+    usernameScreen.classList.remove('hidden');
+    chatScreen.classList.add('hidden');
+  });
+
+  function enterChat() {
+    usernameScreen.classList.add('hidden');
+    chatScreen.classList.remove('hidden');
+    messageInput.focus();
+    socket.emit('get-rooms');
+    loadRoomMessages(currentRoomId);
+    loadFiles();
+  }
+
+  // --- Username submission ---
+
   function submitUsername() {
     const username = usernameInput.value.trim();
     if (!username) return;
 
-    currentUsername = username;
     socket.emit('set-username', username);
   }
 
-  // Server confirmed username is taken
   socket.on('username-taken', (data) => {
-    currentUsername = '';
     const errorMsg = data.error || 'Username is already taken';
     alert(errorMsg);
     usernameInput.focus();
-  });
-
-  // Server confirmed user joined (including ourselves)
-  socket.on('user-joined', (data) => {
-    appendSystemMessage(data.username + ' joined the chat');
-    updateOnlineUsers(data.onlineUsers);
-
-    // If our username is in the joined event, transition to chat screen
-    if (data.username === currentUsername && chatScreen.classList.contains('hidden')) {
-      usernameScreen.classList.add('hidden');
-      chatScreen.classList.remove('hidden');
-      messageInput.focus();
-      loadFiles();
-    }
   });
 
   usernameBtn.addEventListener('click', submitUsername);
@@ -54,12 +80,121 @@
     if (e.key === 'Enter') submitUsername();
   });
 
-  // Send message
+  // --- User events ---
+
+  socket.on('user-joined', (data) => {
+    appendSystemMessage(data.username + ' joined the chat');
+    updateOnlineUsers(data.onlineUsers);
+  });
+
+  socket.on('user-left', (data) => {
+    appendSystemMessage(data.username + ' left the chat');
+    updateOnlineUsers(data.onlineUsers);
+  });
+
+  // --- Room events ---
+
+  socket.on('room-list', (rooms) => {
+    renderRoomList(rooms);
+  });
+
+  socket.on('room-created', (room) => {
+    addRoomToList(room);
+  });
+
+  socket.on('room-messages', (data) => {
+    if (data.roomId !== currentRoomId) return;
+    messagesContainer.innerHTML = '';
+    data.messages.forEach((msg) => {
+      if (msg.type === 'file') {
+        appendFileNotification({
+          username: msg.username,
+          filename: msg.file_url ? msg.file_url.replace('/uploads/', '') : '',
+          originalName: msg.text || 'file',
+          size: 0,
+          timestamp: msg.timestamp
+        });
+      } else {
+        const isOwn = msg.username === currentUsername;
+        appendMessage(msg, isOwn);
+      }
+    });
+  });
+
+  socket.on('join-room-success', (data) => {
+    socket.emit('get-rooms');
+  });
+
+  // --- Room management ---
+
+  function renderRoomList(rooms) {
+    roomListEl.innerHTML = '';
+    rooms.forEach((room) => {
+      addRoomToList(room);
+    });
+  }
+
+  function addRoomToList(room) {
+    // Avoid duplicates
+    if (document.getElementById('room-' + room.id)) return;
+
+    const li = document.createElement('li');
+    li.id = 'room-' + room.id;
+    li.className = 'room-item' + (room.id === currentRoomId ? ' active' : '');
+    li.textContent = room.name;
+    li.dataset.roomId = room.id;
+    li.addEventListener('click', () => switchRoom(room.id, room.name));
+    roomListEl.appendChild(li);
+  }
+
+  function switchRoom(roomId, roomName) {
+    if (roomId === currentRoomId) return;
+
+    // Update active state
+    const prev = roomListEl.querySelector('.room-item.active');
+    if (prev) prev.classList.remove('active');
+    const next = document.getElementById('room-' + roomId);
+    if (next) next.classList.add('active');
+
+    currentRoomId = roomId;
+    currentRoomNameEl.textContent = roomName;
+    messagesContainer.innerHTML = '';
+
+    // Join room on server if needed and load messages
+    socket.emit('join-room', roomId);
+    loadRoomMessages(roomId);
+  }
+
+  function loadRoomMessages(roomId) {
+    socket.emit('get-room-messages', roomId);
+  }
+
+  createRoomBtn.addEventListener('click', createRoom);
+  createRoomInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') createRoom();
+  });
+
+  function createRoom() {
+    const name = createRoomInput.value.trim();
+    if (!name) return;
+    socket.emit('create-room', { name });
+    createRoomInput.value = '';
+  }
+
+  // --- Logout ---
+
+  logoutBtn.addEventListener('click', () => {
+    localStorage.removeItem('localchat_token');
+    location.reload();
+  });
+
+  // --- Send message ---
+
   function sendMessage() {
     const text = messageInput.value.trim();
     if (!text) return;
 
-    socket.emit('chat-message', { text });
+    socket.emit('chat-message', { text, roomId: currentRoomId });
     messageInput.value = '';
   }
 
@@ -70,23 +205,20 @@
 
   // Receive chat message
   socket.on('chat-message', (data) => {
-    const isOwn = data.socketId === socket.id;
+    if (data.roomId !== currentRoomId) return;
+    const isOwn = data.username === currentUsername;
     appendMessage(data, isOwn);
-  });
-
-  // User left
-  socket.on('user-left', (data) => {
-    appendSystemMessage(data.username + ' left the chat');
-    updateOnlineUsers(data.onlineUsers);
   });
 
   // File shared
   socket.on('file-shared', (data) => {
+    if (data.roomId !== currentRoomId) return;
     appendFileNotification(data);
     addFileToList(data.filename, data.originalName, data.size);
   });
 
-  // Append message to chat
+  // --- Message rendering ---
+
   function appendMessage(data, isOwn) {
     const div = document.createElement('div');
     div.className = 'message ' + (isOwn ? 'own' : 'other');
@@ -105,7 +237,6 @@
     scrollToBottom();
   }
 
-  // Append system message
   function appendSystemMessage(text) {
     const div = document.createElement('div');
     div.className = 'message system';
@@ -114,7 +245,6 @@
     scrollToBottom();
   }
 
-  // Append file notification
   function appendFileNotification(data) {
     const div = document.createElement('div');
     div.className = 'message file-notification';
@@ -122,12 +252,13 @@
       '<strong>' + escapeHtml(data.username) + '</strong> shared a file: ' +
       '<a href="/uploads/' + encodeURIComponent(data.filename) + '" target="_blank">' +
       escapeHtml(data.originalName) + '</a>' +
-      ' (' + formatFileSize(data.size) + ')';
+      (data.size ? ' (' + formatFileSize(data.size) + ')' : '');
     messagesContainer.appendChild(div);
     scrollToBottom();
   }
 
-  // Update online users list
+  // --- Online users ---
+
   function updateOnlineUsers(users) {
     onlineUsersList.innerHTML = '';
     userCount.textContent = users.length;
@@ -142,7 +273,8 @@
     });
   }
 
-  // File upload
+  // --- File upload ---
+
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
@@ -166,11 +298,12 @@
       const data = await response.json();
       uploadStatus.textContent = 'Upload complete!';
 
-      // Notify others via socket
+      // Notify others via socket (scoped to room)
       socket.emit('file-shared', {
         filename: data.filename,
         originalName: data.originalName,
-        size: data.size
+        size: data.size,
+        roomId: currentRoomId
       });
 
       setTimeout(() => {
@@ -181,7 +314,6 @@
       console.error('Upload error:', err);
     }
 
-    // Reset input
     fileInput.value = '';
   });
 
@@ -198,7 +330,6 @@
     }
   }
 
-  // Add file to sidebar list
   function addFileToList(filename, displayName, size) {
     const div = document.createElement('div');
     div.className = 'file-item';
@@ -214,7 +345,8 @@
     sidebar.classList.toggle('open');
   });
 
-  // Utility functions
+  // --- Utilities ---
+
   function scrollToBottom() {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }
@@ -226,6 +358,7 @@
   }
 
   function formatFileSize(bytes) {
+    if (!bytes) return '';
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';

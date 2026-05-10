@@ -1,1 +1,4 @@
 node_modules/
+localchat.db
+localchat.db-shm
+localchat.db-wal

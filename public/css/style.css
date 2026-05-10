@@ -170,6 +170,86 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Rooms Section */
+.rooms-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#room-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.room-item {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  color: var(--text);
+}
+
+.room-item:hover {
+  background: var(--bg);
+}
+
+.room-item.active {
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+}
+
+.create-room-form {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.create-room-form input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  font-size: 0.8rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.create-room-form input:focus {
+  border-color: var(--primary);
+}
+
+.create-room-form button {
+  padding: 0.4rem 0.7rem;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+  line-height: 1;
+}
+
+.create-room-form button:hover {
+  background: var(--primary-dark);
+}
+
+/* Room Header */
+.room-header {
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
 #online-users {
   list-style: none;
   display: flex;
@@ -264,6 +344,29 @@ body {
   text-align: center;
   margin-top: 0.5rem;
   color: var(--text-secondary);
+}
+
+/* Logout */
+.logout-section {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.logout-btn {
+  width: 100%;
+  padding: 0.5rem;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 0.375rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.logout-btn:hover {
+  background: var(--danger);
+  color: white;
 }
 
 /* Main Chat Area */

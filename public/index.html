@@ -27,8 +27,17 @@
     </header>
 
     <div class="chat-container">
-      <!-- Sidebar - Online Users -->
+      <!-- Sidebar -->
       <aside id="sidebar" class="sidebar">
+        <div class="rooms-section">
+          <h3>Rooms</h3>
+          <ul id="room-list"></ul>
+          <div class="create-room-form">
+            <input type="text" id="create-room-input" placeholder="New room name..." maxlength="50" autocomplete="off">
+            <button id="create-room-btn">+</button>
+          </div>
+        </div>
+
         <h3>Online Users</h3>
         <ul id="online-users"></ul>
 
@@ -40,10 +49,17 @@
           <input type="file" id="file-input" class="file-input-hidden">
           <div id="upload-status" class="upload-status"></div>
         </div>
+
+        <div class="logout-section">
+          <button id="logout-btn" class="logout-btn">Logout</button>
+        </div>
       </aside>
 
       <!-- Message Area -->
       <main class="chat-main">
+        <div class="room-header">
+          <span id="current-room-name">General</span>
+        </div>
         <div id="messages" class="messages"></div>
 
         <div class="message-input-area">
