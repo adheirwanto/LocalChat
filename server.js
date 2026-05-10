@@ -60,6 +60,37 @@ app.post('/upload', (req, res, next) => {
   res.json(fileInfo);
 });
 
+// Voice note upload endpoint (requires authenticated socket)
+const voiceStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname) || '.webm';
+    cb(null, 'voice-' + uniqueSuffix + ext);
+  }
+});
+
+const voiceUpload = multer({ storage: voiceStorage, limits: { fileSize: 25 * 1024 * 1024 } }); // 25MB max
+
+app.post('/upload/voice', (req, res, next) => {
+  const socketId = req.headers['x-socket-id'];
+  if (!socketId || !registeredSockets.has(socketId)) {
+    return res.status(401).json({ error: 'Unauthorized: must be a registered user' });
+  }
+  next();
+}, voiceUpload.single('voice'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No audio file uploaded' });
+  }
+  const fileInfo = {
+    filename: req.file.filename,
+    size: req.file.size
+  };
+  res.json(fileInfo);
+});
+
 // File download endpoint
 app.get('/uploads/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -313,6 +344,38 @@ io.on('connection', (socket) => {
 
     // Broadcast to room only
     io.to(roomId).emit('file-shared', fileNotification);
+  });
+
+  socket.on('voice-note', (data) => {
+    if (!socket.username) return;
+    if (typeof data.filename !== 'string' || data.filename.length > 500) return;
+
+    const roomId = data.roomId || 'general';
+    const duration = typeof data.duration === 'number' ? data.duration : 0;
+    const timestamp = new Date().toISOString();
+
+    // Persist voice message
+    db.saveMessage({
+      roomId,
+      username: socket.username,
+      text: '',
+      type: 'voice',
+      fileUrl: '/uploads/' + data.filename,
+      timestamp
+    });
+
+    const voiceData = {
+      username: socket.username,
+      filename: data.filename,
+      fileUrl: '/uploads/' + data.filename,
+      duration,
+      timestamp,
+      socketId: socket.id,
+      roomId
+    };
+
+    // Broadcast to room only
+    io.to(roomId).emit('voice-note', voiceData);
   });
 
   socket.on('disconnect', () => {

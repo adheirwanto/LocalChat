@@ -442,7 +442,7 @@ body {
   max-width: 100%;
 }
 
-/* File notification message */
+/* File notification message - legacy centered style (kept for backward compat) */
 .message.file-notification {
   align-self: center;
   background: #e0f2fe;
@@ -461,13 +461,14 @@ body {
 /* Message Input Area */
 .message-input-area {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   padding: 1rem;
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
-.message-input-area input {
+.message-input-area input[type="text"] {
   flex: 1;
   padding: 0.75rem 1rem;
   border: 2px solid var(--border);
@@ -477,11 +478,11 @@ body {
   transition: border-color 0.2s;
 }
 
-.message-input-area input:focus {
+.message-input-area input[type="text"]:focus {
   border-color: var(--primary);
 }
 
-.message-input-area button {
+.message-input-area #send-btn {
   padding: 0.75rem 1.5rem;
   background: var(--primary);
   color: white;
@@ -493,8 +494,186 @@ body {
   transition: background 0.2s;
 }
 
-.message-input-area button:hover {
+.message-input-area #send-btn:hover {
   background: var(--primary-dark);
+}
+
+/* Icon Buttons (attach, mic) */
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.icon-btn:hover {
+  background: var(--border);
+  color: var(--primary);
+}
+
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Mic button recording state */
+#mic-btn.recording {
+  background: var(--danger);
+  color: white;
+  animation: pulse-recording 1.5s infinite;
+}
+
+@keyframes pulse-recording {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Recording Indicator */
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  margin: 0 1rem;
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
+.recording-indicator.hidden {
+  display: none !important;
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--danger);
+  border-radius: 50%;
+  animation: blink-dot 1s infinite;
+}
+
+@keyframes blink-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.recording-text {
+  font-weight: 500;
+}
+
+/* Inline Upload Status */
+.inline-upload-status {
+  padding: 0.3rem 1rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.inline-upload-status.hidden {
+  display: none !important;
+}
+
+/* File Message Bubble */
+.message.file-message {
+  max-width: 70%;
+  padding: 0.6rem 1rem;
+  border-radius: 1rem;
+  word-wrap: break-word;
+}
+
+.message.file-message.own {
+  align-self: flex-end;
+  background: var(--bubble-own);
+  color: var(--bubble-own-text);
+  border-bottom-right-radius: 0.25rem;
+}
+
+.message.file-message.other {
+  align-self: flex-start;
+  background: var(--bubble-other);
+  color: var(--bubble-other-text);
+  border-bottom-left-radius: 0.25rem;
+}
+
+.file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0;
+}
+
+.file-attachment .file-icon {
+  flex-shrink: 0;
+}
+
+.message.file-message.own .file-attachment a {
+  color: rgba(255, 255, 255, 0.95);
+  text-decoration: underline;
+}
+
+.message.file-message.other .file-attachment a {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.message.file-message.other .file-attachment a:hover {
+  text-decoration: underline;
+}
+
+.file-size-label {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* Voice Message Bubble */
+.message.voice-message {
+  max-width: 70%;
+  padding: 0.6rem 1rem;
+  border-radius: 1rem;
+  word-wrap: break-word;
+}
+
+.message.voice-message.own {
+  align-self: flex-end;
+  background: var(--bubble-own);
+  color: var(--bubble-own-text);
+  border-bottom-right-radius: 0.25rem;
+}
+
+.message.voice-message.other {
+  align-self: flex-start;
+  background: var(--bubble-other);
+  color: var(--bubble-other-text);
+  border-bottom-left-radius: 0.25rem;
+}
+
+.voice-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+}
+
+.voice-content audio {
+  max-width: 250px;
+  width: 100%;
+  height: 36px;
+  border-radius: 18px;
+}
+
+.voice-duration {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  white-space: nowrap;
 }
 
 /* Responsive */

@@ -3,6 +3,12 @@
   let currentUsername = '';
   let currentRoomId = 'general';
 
+  // Recording state
+  let isRecording = false;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recordingStartTime = 0;
+
   // DOM elements
   const usernameScreen = document.getElementById('username-screen');
   const chatScreen = document.getElementById('chat-screen');
@@ -23,6 +29,11 @@
   const createRoomBtn = document.getElementById('create-room-btn');
   const currentRoomNameEl = document.getElementById('current-room-name');
   const logoutBtn = document.getElementById('logout-btn');
+  const attachBtn = document.getElementById('attach-btn');
+  const attachFileInput = document.getElementById('attach-file-input');
+  const micBtn = document.getElementById('mic-btn');
+  const recordingIndicator = document.getElementById('recording-indicator');
+  const inlineUploadStatus = document.getElementById('inline-upload-status');
 
   // Check for existing session on load
   const savedToken = localStorage.getItem('localchat_token');
@@ -46,7 +57,6 @@
 
   socket.on('reconnect-failed', () => {
     localStorage.removeItem('localchat_token');
-    // Show username screen
     usernameScreen.classList.remove('hidden');
     chatScreen.classList.add('hidden');
   });
@@ -106,16 +116,23 @@
     if (data.roomId !== currentRoomId) return;
     messagesContainer.innerHTML = '';
     data.messages.forEach((msg) => {
-      if (msg.type === 'file') {
+      const isOwn = msg.username === currentUsername;
+      if (msg.type === 'voice') {
+        appendVoiceNote({
+          username: msg.username,
+          fileUrl: msg.file_url,
+          duration: 0,
+          timestamp: msg.timestamp
+        }, isOwn);
+      } else if (msg.type === 'file') {
         appendFileNotification({
           username: msg.username,
           filename: msg.file_url ? msg.file_url.replace('/uploads/', '') : '',
           originalName: msg.text || 'file',
           size: 0,
           timestamp: msg.timestamp
-        });
+        }, isOwn);
       } else {
-        const isOwn = msg.username === currentUsername;
         appendMessage(msg, isOwn);
       }
     });
@@ -135,7 +152,6 @@
   }
 
   function addRoomToList(room) {
-    // Avoid duplicates
     if (document.getElementById('room-' + room.id)) return;
 
     const li = document.createElement('li');
@@ -150,7 +166,6 @@
   function switchRoom(roomId, roomName) {
     if (roomId === currentRoomId) return;
 
-    // Update active state
     const prev = roomListEl.querySelector('.room-item.active');
     if (prev) prev.classList.remove('active');
     const next = document.getElementById('room-' + roomId);
@@ -160,7 +175,6 @@
     currentRoomNameEl.textContent = roomName;
     messagesContainer.innerHTML = '';
 
-    // Join room on server if needed and load messages
     socket.emit('join-room', roomId);
     loadRoomMessages(roomId);
   }
@@ -213,9 +227,174 @@
   // File shared
   socket.on('file-shared', (data) => {
     if (data.roomId !== currentRoomId) return;
-    appendFileNotification(data);
+    const isOwn = data.username === currentUsername;
+    appendFileNotification(data, isOwn);
     addFileToList(data.filename, data.originalName, data.size);
   });
+
+  // Voice note received
+  socket.on('voice-note', (data) => {
+    if (data.roomId !== currentRoomId) return;
+    const isOwn = data.username === currentUsername;
+    appendVoiceNote(data, isOwn);
+  });
+
+  // --- Inline file attachment ---
+
+  attachBtn.addEventListener('click', () => {
+    attachFileInput.click();
+  });
+
+  attachFileInput.addEventListener('change', async () => {
+    const file = attachFileInput.files[0];
+    if (!file) return;
+
+    showInlineUploadStatus('Uploading...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('/upload', {
+        method: 'POST',
+        headers: {
+          'X-Socket-ID': socket.id
+        },
+        body: formData
+      });
+
+      if (!response.ok) throw new Error('Upload failed');
+
+      const data = await response.json();
+      showInlineUploadStatus('Upload complete!');
+
+      socket.emit('file-shared', {
+        filename: data.filename,
+        originalName: data.originalName,
+        size: data.size,
+        roomId: currentRoomId
+      });
+
+      setTimeout(() => {
+        hideInlineUploadStatus();
+      }, 3000);
+    } catch (err) {
+      showInlineUploadStatus('Upload failed. Try again.');
+      setTimeout(() => {
+        hideInlineUploadStatus();
+      }, 3000);
+      console.error('Upload error:', err);
+    }
+
+    attachFileInput.value = '';
+  });
+
+  function showInlineUploadStatus(text) {
+    inlineUploadStatus.textContent = text;
+    inlineUploadStatus.classList.remove('hidden');
+  }
+
+  function hideInlineUploadStatus() {
+    inlineUploadStatus.classList.add('hidden');
+    inlineUploadStatus.textContent = '';
+  }
+
+  // --- Voice note recording ---
+
+  micBtn.addEventListener('click', toggleRecording);
+
+  async function toggleRecording() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      await startRecording();
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      recordedChunks = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+      const options = mimeType ? { mimeType } : {};
+
+      mediaRecorder = new MediaRecorder(stream, options);
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          recordedChunks.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+
+        const duration = Math.round((Date.now() - recordingStartTime) / 1000);
+        const blob = new Blob(recordedChunks, { type: mimeType || 'audio/webm' });
+
+        uploadVoiceNote(blob, duration);
+      };
+
+      mediaRecorder.start();
+      recordingStartTime = Date.now();
+      isRecording = true;
+
+      micBtn.classList.add('recording');
+      recordingIndicator.classList.remove('hidden');
+    } catch (err) {
+      console.error('Microphone access denied:', err);
+      alert('Microphone access is required for voice notes.');
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    isRecording = false;
+    micBtn.classList.remove('recording');
+    recordingIndicator.classList.add('hidden');
+  }
+
+  async function uploadVoiceNote(blob, duration) {
+    showInlineUploadStatus('Sending voice note...');
+
+    const formData = new FormData();
+    formData.append('voice', blob, 'voice-note.webm');
+
+    try {
+      const response = await fetch('/upload/voice', {
+        method: 'POST',
+        headers: {
+          'X-Socket-ID': socket.id
+        },
+        body: formData
+      });
+
+      if (!response.ok) throw new Error('Voice upload failed');
+
+      const data = await response.json();
+      showInlineUploadStatus('Voice note sent!');
+
+      socket.emit('voice-note', {
+        filename: data.filename,
+        duration,
+        roomId: currentRoomId
+      });
+
+      setTimeout(() => {
+        hideInlineUploadStatus();
+      }, 2000);
+    } catch (err) {
+      showInlineUploadStatus('Failed to send voice note.');
+      setTimeout(() => {
+        hideInlineUploadStatus();
+      }, 3000);
+      console.error('Voice upload error:', err);
+    }
+  }
 
   // --- Message rendering ---
 
@@ -245,14 +424,51 @@
     scrollToBottom();
   }
 
-  function appendFileNotification(data) {
+  function appendFileNotification(data, isOwn) {
     const div = document.createElement('div');
-    div.className = 'message file-notification';
+    div.className = 'message file-message ' + (isOwn ? 'own' : 'other');
+
+    const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
+    }) : '';
+
+    const fileUrl = '/uploads/' + encodeURIComponent(data.filename);
+    const sizeStr = data.size ? ' (' + formatFileSize(data.size) + ')' : '';
+
     div.innerHTML =
-      '<strong>' + escapeHtml(data.username) + '</strong> shared a file: ' +
-      '<a href="/uploads/' + encodeURIComponent(data.filename) + '" target="_blank">' +
-      escapeHtml(data.originalName) + '</a>' +
-      (data.size ? ' (' + formatFileSize(data.size) + ')' : '');
+      '<div class="message-username">' + escapeHtml(data.username) + '</div>' +
+      '<div class="file-attachment">' +
+        '<svg class="file-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+        '<a href="' + fileUrl + '" target="_blank">' + escapeHtml(data.originalName) + '</a>' +
+        '<span class="file-size-label">' + sizeStr + '</span>' +
+      '</div>' +
+      (time ? '<div class="message-time">' + time + '</div>' : '');
+
+    messagesContainer.appendChild(div);
+    scrollToBottom();
+  }
+
+  function appendVoiceNote(data, isOwn) {
+    const div = document.createElement('div');
+    div.className = 'message voice-message ' + (isOwn ? 'own' : 'other');
+
+    const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
+    }) : '';
+
+    const audioUrl = data.fileUrl || '/uploads/' + encodeURIComponent(data.filename);
+    const durationStr = data.duration ? formatDuration(data.duration) : '';
+
+    div.innerHTML =
+      '<div class="message-username">' + escapeHtml(data.username) + '</div>' +
+      '<div class="voice-content">' +
+        '<audio controls preload="metadata" src="' + audioUrl + '"></audio>' +
+        (durationStr ? '<span class="voice-duration">' + durationStr + '</span>' : '') +
+      '</div>' +
+      (time ? '<div class="message-time">' + time + '</div>' : '');
+
     messagesContainer.appendChild(div);
     scrollToBottom();
   }
@@ -273,7 +489,7 @@
     });
   }
 
-  // --- File upload ---
+  // --- File upload (sidebar - keep existing) ---
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
@@ -298,7 +514,6 @@
       const data = await response.json();
       uploadStatus.textContent = 'Upload complete!';
 
-      // Notify others via socket (scoped to room)
       socket.emit('file-shared', {
         filename: data.filename,
         originalName: data.originalName,
@@ -362,5 +577,11 @@
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return mins + ':' + (secs < 10 ? '0' : '') + secs;
   }
 })();
