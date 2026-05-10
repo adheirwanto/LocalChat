@@ -26,6 +26,7 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -103,6 +104,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
 }
 
 .chat-header {
@@ -146,6 +148,7 @@ body {
 .chat-container {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -685,6 +688,7 @@ body {
     width: 80%;
     max-width: 300px;
     height: 100vh;
+    height: 100dvh;
     z-index: 1000;
     transition: right 0.3s ease;
     box-shadow: -5px 0 15px rgba(0, 0, 0, 0.1);
@@ -695,8 +699,32 @@ body {
     right: 0;
   }
 
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 999;
+  }
+
+  .sidebar-overlay.active {
+    display: block;
+  }
+
   .message {
     max-width: 85%;
+  }
+
+  .message.file-message,
+  .message.voice-message {
+    max-width: 85%;
+  }
+
+  .voice-content audio {
+    max-width: 180px;
   }
 
   .username-card {
@@ -705,5 +733,23 @@ body {
 
   .username-input-group {
     flex-direction: column;
+  }
+
+  .message-input-area {
+    padding: 0.5rem;
+    gap: 0.25rem;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+
+  .message-input-area #send-btn {
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+  }
+
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
   }
 }

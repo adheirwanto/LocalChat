@@ -312,6 +312,18 @@
   }
 
   async function startRecording() {
+    // Check if mediaDevices API is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showMicError('Your browser does not support audio recording, or HTTPS is required. Please use HTTPS or localhost to enable voice notes.');
+      return;
+    }
+
+    // Warn if not on HTTPS or localhost (mic will likely fail)
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      showMicError('Voice notes require HTTPS. Connect via the HTTPS URL (port 3443) or use localhost.');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -345,8 +357,15 @@
       recordingIndicator.classList.remove('hidden');
     } catch (err) {
       console.error('Microphone access denied:', err);
-      alert('Microphone access is required for voice notes.');
+      showMicError('Microphone access denied. Please allow microphone permissions and ensure you are using HTTPS.');
     }
+  }
+
+  function showMicError(message) {
+    showInlineUploadStatus(message);
+    setTimeout(() => {
+      hideInlineUploadStatus();
+    }, 5000);
   }
 
   function stopRecording() {
@@ -558,7 +577,30 @@
   // Toggle sidebar on mobile
   toggleSidebarBtn.addEventListener('click', () => {
     sidebar.classList.toggle('open');
+    toggleSidebarOverlay(sidebar.classList.contains('open'));
   });
+
+  // Sidebar overlay for mobile
+  function toggleSidebarOverlay(show) {
+    let overlay = document.querySelector('.sidebar-overlay');
+    if (show) {
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'sidebar-overlay active';
+        overlay.addEventListener('click', () => {
+          sidebar.classList.remove('open');
+          toggleSidebarOverlay(false);
+        });
+        document.body.appendChild(overlay);
+      } else {
+        overlay.classList.add('active');
+      }
+    } else {
+      if (overlay) {
+        overlay.classList.remove('active');
+      }
+    }
+  }
 
   // --- Utilities ---
 
