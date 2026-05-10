@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LocalChat - LAN Chat & File Sharing</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Username Modal -->
+  <div id="username-screen" class="username-screen">
+    <div class="username-card">
+      <h1>LocalChat</h1>
+      <p>Enter your display name to join the chat</p>
+      <div class="username-input-group">
+        <input type="text" id="username-input" placeholder="Your name..." maxlength="20" autocomplete="off">
+        <button id="username-btn">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Chat Interface -->
+  <div id="chat-screen" class="chat-screen hidden">
+    <header class="chat-header">
+      <h1>LocalChat</h1>
+      <button id="toggle-sidebar" class="toggle-sidebar-btn" title="Toggle users list">Users <span id="user-count">0</span></button>
+    </header>
+
+    <div class="chat-container">
+      <!-- Sidebar - Online Users -->
+      <aside id="sidebar" class="sidebar">
+        <h3>Online Users</h3>
+        <ul id="online-users"></ul>
+
+        <h3>Shared Files</h3>
+        <div id="file-list" class="file-list"></div>
+
+        <div class="file-upload-section">
+          <label for="file-input" class="file-upload-label">Upload File</label>
+          <input type="file" id="file-input" class="file-input-hidden">
+          <div id="upload-status" class="upload-status"></div>
+        </div>
+      </aside>
+
+      <!-- Message Area -->
+      <main class="chat-main">
+        <div id="messages" class="messages"></div>
+
+        <div class="message-input-area">
+          <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+          <button id="send-btn">Send</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/chat.js"></script>
+</body>
+</html>
