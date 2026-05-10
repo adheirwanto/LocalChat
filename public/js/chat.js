@@ -314,13 +314,7 @@
   async function startRecording() {
     // Check if mediaDevices API is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showMicError('Your browser does not support audio recording, or HTTPS is required. Please use HTTPS or localhost to enable voice notes.');
-      return;
-    }
-
-    // Warn if not on HTTPS or localhost (mic will likely fail)
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      showMicError('Voice notes require HTTPS. Connect via the HTTPS URL (port 3443) or use localhost.');
+      showMicError('Your browser does not support audio recording. Please use a modern browser.');
       return;
     }
 
@@ -357,7 +351,7 @@
       recordingIndicator.classList.remove('hidden');
     } catch (err) {
       console.error('Microphone access denied:', err);
-      showMicError('Microphone access denied. Please allow microphone permissions and ensure you are using HTTPS.');
+      showMicError('Microphone access denied. Make sure you accepted the security certificate and allowed microphone permission.');
     }
   }
 

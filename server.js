@@ -10,11 +10,8 @@ const { execSync } = require('child_process');
 const db = require('./database/db');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
 
 const PORT = 3000;
-const HTTPS_PORT = 3443;
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const CERTS_DIR = path.join(__dirname, 'certs');
 
@@ -428,9 +425,6 @@ function setupSocketHandlers(ioInstance) {
   });
 }
 
-// Apply socket handlers to HTTP server
-setupSocketHandlers(io);
-
 // Get local network IPs
 function getLocalIPs() {
   const interfaces = os.networkInterfaces();
@@ -456,7 +450,14 @@ function ensureCerts() {
 
   if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
     console.log('Generating self-signed certificate for HTTPS...');
-    // Write a minimal openssl config to avoid system config issues
+
+    // Include all local IPs in SAN so browsers accept the cert
+    const ips = getLocalIPs();
+    const altNames = ['DNS.1 = localhost', 'IP.1 = 127.0.0.1'];
+    ips.forEach(({ address }, i) => {
+      altNames.push('IP.' + (i + 2) + ' = ' + address);
+    });
+
     const confPath = path.join(CERTS_DIR, 'openssl.cnf');
     const conf = [
       '[req]',
@@ -468,55 +469,48 @@ function ensureCerts() {
       '[v3_req]',
       'subjectAltName = @alt_names',
       '[alt_names]',
-      'DNS.1 = localhost',
-      'IP.1 = 127.0.0.1'
+      ...altNames
     ].join('\n');
     fs.writeFileSync(confPath, conf);
 
-    execSync(`openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" -days 365 -nodes -config "${confPath}"`);
+    execSync('openssl req -x509 -newkey rsa:2048 -keyout "' + keyPath + '" -out "' + certPath + '" -days 365 -nodes -config "' + confPath + '"');
+    console.log('Certificate generated successfully.\n');
   }
   return { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
 }
 
-// Start server
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n=== LocalChat Server Running ===`);
-  console.log(`Local:   http://localhost:${PORT}`);
+// Try HTTPS first, fall back to HTTP
+let mainServer;
+let protocol = 'http';
+
+try {
+  const certs = ensureCerts();
+  mainServer = https.createServer(certs, app);
+  protocol = 'https';
+} catch (err) {
+  console.log('HTTPS not available (' + err.message + '). Falling back to HTTP.');
+  console.log('Voice notes may not work on mobile without HTTPS.\n');
+  mainServer = http.createServer(app);
+  protocol = 'http';
+}
+
+const io = new Server(mainServer);
+setupSocketHandlers(io);
+
+mainServer.listen(PORT, '0.0.0.0', () => {
+  console.log('\n=== LocalChat Server Running ===');
+  console.log('Local:   ' + protocol + '://localhost:' + PORT);
 
   const ips = getLocalIPs();
   if (ips.length > 0) {
-    console.log(`\nNetwork addresses (share with others on your LAN):`);
+    console.log('\nShare this address with others on your network:');
     ips.forEach(({ name, address }) => {
-      console.log(`  ${name}: http://${address}:${PORT}`);
+      console.log('  ' + name + ': ' + protocol + '://' + address + ':' + PORT);
     });
-  } else {
-    console.log(`\nNo network interfaces found. Use http://localhost:${PORT}`);
   }
 
-  console.log(`\nPress Ctrl+C to stop the server.\n`);
+  if (protocol === 'https') {
+    console.log('\nNote: On first visit, accept the security warning (self-signed certificate).');
+  }
+  console.log('\nPress Ctrl+C to stop.\n');
 });
-
-// Start HTTPS server for mobile mic access
-try {
-  const certs = ensureCerts();
-  const httpsServer = https.createServer(certs, app);
-  const ioHttps = new Server(httpsServer);
-  setupSocketHandlers(ioHttps);
-
-  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-    console.log(`=== HTTPS Server (for mobile mic access) ===`);
-    console.log(`Local:   https://localhost:${HTTPS_PORT}`);
-
-    const ips = getLocalIPs();
-    if (ips.length > 0) {
-      console.log(`\nHTTPS Network addresses (use these on mobile for voice notes):`);
-      ips.forEach(({ name, address }) => {
-        console.log(`  ${name}: https://${address}:${HTTPS_PORT}`);
-      });
-    }
-    console.log('');
-  });
-} catch (err) {
-  console.log('HTTPS server not available (openssl may not be installed):', err.message);
-  console.log('Voice notes on mobile will require a reverse proxy with HTTPS.\n');
-}
