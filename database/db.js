@@ -1,6 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 const DB_PATH = path.join(__dirname, '..', 'localchat.db');
 const db = new Database(DB_PATH);
@@ -53,8 +53,8 @@ if (!generalRoom) {
 // --- User functions ---
 
 function createUser(username) {
-  const id = uuidv4();
-  const sessionToken = uuidv4();
+  const id = randomUUID();
+  const sessionToken = randomUUID();
   db.prepare('INSERT INTO users (id, username, session_token) VALUES (?, ?, ?)').run(id, username, sessionToken);
   return { id, username, sessionToken };
 }
@@ -72,7 +72,7 @@ function getUserByUsernameCaseInsensitive(username) {
 }
 
 function updateSessionToken(username) {
-  const newToken = uuidv4();
+  const newToken = randomUUID();
   db.prepare('UPDATE users SET session_token = ? WHERE username = ?').run(newToken, username);
   return newToken;
 }
@@ -80,7 +80,7 @@ function updateSessionToken(username) {
 // --- Room functions ---
 
 function createRoom(name, creatorUsername) {
-  const id = uuidv4();
+  const id = randomUUID();
   db.prepare('INSERT INTO rooms (id, name, creator_username) VALUES (?, ?, ?)').run(id, name, creatorUsername);
   // Auto-add creator as member
   addRoomMember(id, creatorUsername);
@@ -124,7 +124,7 @@ function getUserRooms(username) {
 // --- Message functions ---
 
 function saveMessage({ roomId, username, text, type, fileUrl, timestamp }) {
-  const id = uuidv4();
+  const id = randomUUID();
   db.prepare('INSERT INTO messages (id, room_id, username, text, type, file_url, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(id, roomId, username, text || null, type || 'text', fileUrl || null, timestamp);
   return id;
